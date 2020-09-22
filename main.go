@@ -1,9 +1,9 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"github.com/bwmarrin/discordgo"
+	"github.com/tkanos/gonfig"
 	"os"
 	"os/signal"
 	"strconv"
@@ -11,21 +11,42 @@ import (
 	"time"
 )
 
-// Variables used for command line parameters
-var (
+type Configuration struct {
+	Message               string
+	MembershipThreshold   int64
+	NotificationChannelId string
+	NotificationRoleId    string
+}
+
+type AuthConfiguration struct {
 	Token string
+}
+
+var (
+	configuration Configuration
+	auth          AuthConfiguration
 )
 
 func init() {
+	configuration = Configuration{}
+	err := gonfig.GetConf("config.json", &configuration)
+	if err != nil {
+		fmt.Println("error reading config.json,", err)
+		panic(err)
+	}
 
-	flag.StringVar(&Token, "t", "", "Bot Token")
-	flag.Parse()
+	auth = AuthConfiguration{}
+	err = gonfig.GetConf("auth.json", &auth)
+	if err != nil {
+		fmt.Println("error reading auth.json,", err)
+		panic(err)
+	}
 }
 
 func main() {
-
+	fmt.Println("token: " + auth.Token)
 	// Create a new Discord session using the provided bot token.
-	dg, err := discordgo.New("Bot " + Token)
+	dg, err := discordgo.New("Bot " + auth.Token)
 	if err != nil {
 		fmt.Println("error creating Discord session,", err)
 		return
@@ -53,6 +74,19 @@ func main() {
 	dg.Close()
 }
 
+func getRole(session *discordgo.Session, guildId string, roleId string) (*discordgo.Role, error) {
+	roles, err := session.GuildRoles(guildId)
+	if err != nil {
+		return nil, err
+	}
+	for _, role := range roles {
+		if role.ID == roleId {
+			return role, nil
+		}
+	}
+	return nil, fmt.Errorf("Role %s not found: ", roleId)
+}
+
 // This function will be called (due to AddHandler above) every time a new
 // message is created on any channel that the authenticated bot has access to.
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -60,7 +94,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	// Ignore all messages created by the bot itself
 	// This isn't required in this specific example but it's a good practice.
 	if m.Author.ID == s.State.User.ID ||
-			len(m.Content) == 0 {
+		len(m.Content) == 0 {
 		return
 	}
 
@@ -70,10 +104,20 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 	userJoinTime, _ := member.JoinedAt.Parse()
-	s.ChannelMessageSend(m.ChannelID, "User joined at " +
-		strconv.FormatInt(time.Now().Unix() - userJoinTime.Unix(), 10))
-
-	if time.Now().Unix() - userJoinTime.Unix() < 10000 {
-		s.GuildMemberDelete(m.GuildID, m.Author.ID)
+	s.ChannelMessageSend(m.ChannelID, "User joined at "+
+		strconv.FormatInt(time.Now().Unix()-userJoinTime.Unix(), 10))
+	msg := configuration.Message
+	if len(configuration.NotificationRoleId) != 0 {
+		role, err := getRole(s, m.GuildID, configuration.NotificationRoleId)
+		if err != nil {
+			panic(err)
+		}
+		msg = fmt.Sprintf("%s: %s", role.Mention(), msg)
 	}
+	s.ChannelMessageSend(m.ChannelID, msg)
+
+	//if time.Now().Unix() - userJoinTime.Unix() < 10000 {
+	s.ChannelMessageDelete(m.ChannelID, m.ID)
+	//	s.GuildMemberDelete(m.GuildID, m.Author.ID)
+	//}
 }
