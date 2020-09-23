@@ -1,12 +1,12 @@
 package main
 
 import (
+    "regexp"
 	"fmt"
 	"github.com/bwmarrin/discordgo"
 	"github.com/tkanos/gonfig"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 )
@@ -25,6 +25,7 @@ type AuthConfiguration struct {
 var (
 	configuration Configuration
 	auth          AuthConfiguration
+	re			  *regexp.Regexp
 )
 
 func init() {
@@ -41,10 +42,11 @@ func init() {
 		fmt.Println("error reading auth.json,", err)
 		panic(err)
 	}
+	
+	re = regexp.MustCompile("([a-zA-Z0-9]+://)?([a-zA-Z0-9_]+:[a-zA-Z0-9_]+@)?([a-zA-Z0-9.-]+\\.[A-Za-z]{2,4})(:[0-9]+)?(/.*)?")
 }
 
 func main() {
-	fmt.Println("token: " + auth.Token)
 	// Create a new Discord session using the provided bot token.
 	dg, err := discordgo.New("Bot " + auth.Token)
 	if err != nil {
@@ -74,7 +76,7 @@ func main() {
 	dg.Close()
 }
 
-func getRole(session *discordgo.Session, guildId string, roleId string) (*discordgo.Role, error) {
+func Role(session *discordgo.Session, guildId string, roleId string) (*discordgo.Role, error) {
 	roles, err := session.GuildRoles(guildId)
 	if err != nil {
 		return nil, err
@@ -87,37 +89,61 @@ func getRole(session *discordgo.Session, guildId string, roleId string) (*discor
 	return nil, fmt.Errorf("Role %s not found: ", roleId)
 }
 
+func UserJoinTime(s *discordgo.Session, guildId string, authorId string) (int64, error) {
+	member, err := s.GuildMember(guildId, authorId)
+	if err != nil {
+		return 0, fmt.Errorf("error retrieving membership information,", err)
+	}
+	userJoinTime, err := member.JoinedAt.Parse()
+	if err != nil {
+		return 0, fmt.Errorf("error parsing user join time info,", err)
+	}
+	return userJoinTime.Unix(), nil
+}
+
 // This function will be called (due to AddHandler above) every time a new
 // message is created on any channel that the authenticated bot has access to.
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
-
-	// Ignore all messages created by the bot itself
-	// This isn't required in this specific example but it's a good practice.
-	if m.Author.ID == s.State.User.ID ||
-		len(m.Content) == 0 {
+	// Ignore all messages created by the bot itself or empty state updates
+	if m.Author.ID == s.State.User.ID || len(m.Content) == 0 {
 		return
 	}
 
-	member, err := s.GuildMember(m.GuildID, m.Author.ID)
+	user, err := s.User(m.Author.ID)
+    if err != nil {
+        fmt.Println("error retrieving user information of user %s,",
+            m.Author.ID, err)
+		return
+    }
+    
+	// also return if the message is posted by a bot
+	if user.Bot {
+        return
+    }
+
+    userJoinTime, err := UserJoinTime(s, m.GuildID, m.Author.ID)
 	if err != nil {
-		fmt.Println("error retrieving membership information,", err)
+		fmt.Println(err)
 		return
 	}
-	userJoinTime, _ := member.JoinedAt.Parse()
-	s.ChannelMessageSend(m.ChannelID, "User joined at "+
-		strconv.FormatInt(time.Now().Unix()-userJoinTime.Unix(), 10))
-	msg := configuration.Message
-	if len(configuration.NotificationRoleId) != 0 {
-		role, err := getRole(s, m.GuildID, configuration.NotificationRoleId)
-		if err != nil {
-			panic(err)
-		}
-		msg = fmt.Sprintf("%s: %s", role.Mention(), msg)
-	}
-	s.ChannelMessageSend(m.ChannelID, msg)
+	if time.Now().Unix() - userJoinTime <  configuration.MembershipThreshold &&
+			re.FindStringIndex(m.Content) != nil {
+        s.ChannelMessageDelete(m.ChannelID, m.ID)
+        s.GuildMemberDelete(m.GuildID, m.Author.ID)
 
-	//if time.Now().Unix() - userJoinTime.Unix() < 10000 {
-	s.ChannelMessageDelete(m.ChannelID, m.ID)
-	//	s.GuildMemberDelete(m.GuildID, m.Author.ID)
-	//}
+        if len(configuration.NotificationChannelId) != 0 {
+            s.ChannelMessageSend(configuration.NotificationChannelId,
+                fmt.Sprintf("Linkspam geplaatst door gebruiker <@%s>; gebruiker wordt gekickt.", m.Author.ID))
+        }
+        
+        msg := configuration.Message
+        if len(configuration.NotificationRoleId) != 0 {
+            role, err := Role(s, m.GuildID, configuration.NotificationRoleId)
+            if err != nil {
+                fmt.Println(err)
+            }
+            msg = fmt.Sprintf("%s: %s", role.Mention(), msg)
+        }
+        s.ChannelMessageSend(m.ChannelID, msg)
+	}
 }
