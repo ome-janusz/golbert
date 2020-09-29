@@ -130,7 +130,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	if time.Now().Unix() - userJoinTime <  configuration.MembershipThreshold &&
+	if time.Now().UnixNano() - userJoinTime <  configuration.MembershipThreshold &&
 			re.FindStringIndex(m.Content) != nil {
         s.ChannelMessageDelete(m.ChannelID, m.ID)
         s.GuildMemberDelete(m.GuildID, m.Author.ID)
