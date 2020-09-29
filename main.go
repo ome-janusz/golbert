@@ -35,6 +35,9 @@ func init() {
 		fmt.Println("error reading config.json,", err)
 		panic(err)
 	}
+	
+	// making the configuration compatible with the Node.js version
+	configuration.MembershipThreshold *= 1000
 
 	auth = AuthConfiguration{}
 	err = gonfig.GetConf("auth.json", &auth)
@@ -98,7 +101,7 @@ func UserJoinTime(s *discordgo.Session, guildId string, authorId string) (int64,
 	if err != nil {
 		return 0, fmt.Errorf("error parsing user join time info,", err)
 	}
-	return userJoinTime.Unix(), nil
+	return userJoinTime.UnixNano(), nil
 }
 
 // This function will be called (due to AddHandler above) every time a new
@@ -126,6 +129,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		fmt.Println(err)
 		return
 	}
+
 	if time.Now().Unix() - userJoinTime <  configuration.MembershipThreshold &&
 			re.FindStringIndex(m.Content) != nil {
         s.ChannelMessageDelete(m.ChannelID, m.ID)
