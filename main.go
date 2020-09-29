@@ -37,7 +37,7 @@ func init() {
 	}
 	
 	// making the configuration compatible with the Node.js version
-	configuration.MembershipThreshold *= 1000
+	configuration.MembershipThreshold *= 1000000
 
 	auth = AuthConfiguration{}
 	err = gonfig.GetConf("auth.json", &auth)
